@@ -9,3 +9,7 @@ The /boot/firmware/config.txt includes the following lines:
 dtoverlay=spi1-3cs
 
 dtoverlay=uart3
+
+Compile with the wiringPi library:
+
+gcc -o kasm_write  kasm_write.c -l wiringPi
