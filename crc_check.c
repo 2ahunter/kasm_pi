@@ -7,11 +7,7 @@
 #define D16_SZ 16
 #define MSBMASK_32 0x80000000
 #define MSBMASK_16 0x8000
-#define CRC_TESTING 1
-
-uint32_t poly32 = 0x04C11DB7; // default 32 bit CRC polynomial
-// CRC-16-DNP
-uint16_t poly16 = 0x3D65; // => x^{16}+x^{13}+x^{12}+x^{11}+x^{10}+x^{8}+x^{6}+x^{5}+x^{2}+1
+// #define CRC_TESTING 1
 
 
 union DATA32{
@@ -83,6 +79,9 @@ uint16_t calc_crc16(uint16_t init_val, uint16_t data, uint16_t poly){
 #ifdef CRC_TESTING
 int main(int argc, char **argv)
 {
+    uint32_t poly32 = 0x04C11DB7; // default 32 bit CRC polynomial
+    // CRC-16-DNP
+    uint16_t poly16 = 0x3D65; // => x^{16}+x^{13}+x^{12}+x^{11}+x^{10}+x^{8}+x^{6}+x^{5}+x^{2}+1
     union DATA32 data1, data2;
     uint8_t index={0};
     data1.val = 0x08070605;
@@ -110,8 +109,8 @@ int main(int argc, char **argv)
     printf("%08X\n", calc_crc32(0xFFFFFFFF, data2.val,poly32)); // 0x72887319
     printf("%08X\n", calc_crc32(0xFFFFFFFF, data3,poly32));  // 0XDF8A8A2B
 
-    printf("%04X\n", calc_crc16(0xffff,data4.val,poly16)); // 0X7137 ?
-    printf("%04X\n", calc_crc16(0xffff,data5.val,poly16)); // 0XC2FF ?
+    printf("%04X\n", calc_crc16(0xFFFF,data4.val,poly16)); // 0X7137
+    printf("%04X\n", calc_crc16(0xFFFF,data5.val,poly16)); // 0XC2FF
 
 
     return(1);

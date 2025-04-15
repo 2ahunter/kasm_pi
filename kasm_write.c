@@ -7,6 +7,7 @@
 #include <linux/spi/spidev.h>
 #include "wiringPi.h"
 #include "wiringPiSPI.h"
+#include "crc_check.h"
 
 
 #define	TRUE	(1==1)
@@ -15,7 +16,9 @@
 #define SPI_DEV     1   // spi device number
 #define	SPI_CHAN	2   // which chip select
 #define SPEED       5   // in megahertz
-#define BUF_SIZE    52
+#define BUF_SIZE    54 // bytes, including crc16
+#define CRC_INDX    26  // index of the crc value in the data structure
+
 #define MAX_VAL     24000
 #define MIN_VAL     -24000
 
@@ -26,6 +29,8 @@ union CMD_DATA {
 
 union CMD_DATA* cmd_data_ptr = &cmd_data;
 
+uint16_t poly16 = 0x3D65; // CRC-16-DNP 
+uint16_t init_val = 0xFFFF; // initial value for CRC calculations
 
 int main (int argc, char *argv[])
 {
@@ -37,7 +42,7 @@ int main (int argc, char *argv[])
 
     // Parse the command line argument
     uint8_t index = atoi(argv[1]);
-    if (index < 0 || index >= BUF_SIZE) {
+    if (index < 0 || index >= (BUF_SIZE/2 -2)) {
         fprintf(stderr, "Invalid index. Must be between 0 and %d.\n", 
             BUF_SIZE/2 - 1);
         return 1;
@@ -55,6 +60,7 @@ int main (int argc, char *argv[])
     int i = {0};
     int Fd = {0};
     int copy_success = TRUE;
+    uint16_t crc={0};
 
     // populate the buffer with random values
     for(i = 0; i < BUF_SIZE/2; i++){
@@ -64,13 +70,37 @@ int main (int argc, char *argv[])
 
     // Set the indexed value to the command
     cmd_data.values[index] = command;
+   
+    // compute CRC and append to cmd_data.values
+    crc = init_val; // set the initial value to crc
+    for(i=0;i<(BUF_SIZE/2 -1);i++){
+        crc = calc_crc16(crc, cmd_data.values[i],poly16);
+        // printf("CRC: %x \n", crc);
+    }
+    // printf("CRC %x \n", crc);
+    cmd_data.values[CRC_INDX]=crc;
+
+    // verify crc calculation
+        crc = init_val; // set the initial value to crc
+    for(i=0;i<(BUF_SIZE/2);i++){
+        crc = calc_crc16(crc, cmd_data.values[i],poly16);
+        // printf("CRC: %x \n", crc);
+    }
+    if(crc == 0){
+        printf("CRC verified\n");
+    } else {
+        printf("CRC check failed: %x \n", crc);
+    }
+    
+
+
 
     // print the values
     for(i = 0; i < BUF_SIZE/2; i++){
-        printf("%d ", cmd_data.values[i]);
+        printf("%x ", cmd_data.values[i]);
     }
     printf("\r\n");
-   
+
     // Fill the buffer with the command data
     memcpy(TXRX_buffer, cmd_data_ptr, BUF_SIZE); 
 
@@ -87,7 +117,7 @@ int main (int argc, char *argv[])
         printf ("SPI failure: %s\n", strerror (errno)) ;
         exit (EXIT_FAILURE);
     } else {
-
+        printf("Data received: \n");
         for(i = 0; i < BUF_SIZE; i ++){
             if(TXRX_buffer[i] != cmd_data.bytes[i]) copy_success = FALSE;
             printf("%x ", TXRX_buffer[i]);
