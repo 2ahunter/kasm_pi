@@ -44,7 +44,7 @@ int main (int argc, char *argv[])
     uint8_t index = atoi(argv[1]);
     if (index < 0 || index >= (BUF_SIZE/2 -2)) {
         fprintf(stderr, "Invalid index. Must be between 0 and %d.\n", 
-            BUF_SIZE/2 - 1);
+            BUF_SIZE/2 - 2);
         return 1;
     }
     // Parse the command line argument
@@ -96,10 +96,10 @@ int main (int argc, char *argv[])
 
 
     // print the values
-    for(i = 0; i < BUF_SIZE/2; i++){
-        printf("%x ", cmd_data.values[i]);
-    }
-    printf("\r\n");
+    // for(i = 0; i < BUF_SIZE/2; i++){
+    //     printf("%x ", cmd_data.values[i]);
+    // }
+    // printf("\r\n");
 
     // Fill the buffer with the command data
     memcpy(TXRX_buffer, cmd_data_ptr, BUF_SIZE); 
