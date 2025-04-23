@@ -5,10 +5,11 @@
 #include <string.h>
 #include <errno.h>
 #include <linux/spi/spidev.h>
+
 #include "wiringPi.h"
 #include "wiringPiSPI.h"
 #include "crc_check.h"
-
+#include "timers.h"
 
 #define	TRUE	(1==1)
 #define	FALSE	(!TRUE)
@@ -31,6 +32,7 @@ union CMD_DATA* cmd_data_ptr = &cmd_data;
 
 uint16_t poly16 = 0x3D65; // CRC-16-DNP 
 uint16_t init_val = 0xFFFF; // initial value for CRC calculations
+
 
 int main (int argc, char *argv[])
 {
@@ -55,7 +57,6 @@ int main (int argc, char *argv[])
         return 1;
     }
 
-
     unsigned char TXRX_buffer[BUF_SIZE];
     int i = {0};
     int Fd = {0};
@@ -71,12 +72,15 @@ int main (int argc, char *argv[])
     // Set the indexed value to the command
     cmd_data.values[index] = command;
    
+    start_timer(); // start the timer
     // compute CRC and append to cmd_data.values
     crc = init_val; // set the initial value to crc
     for(i=0;i<(BUF_SIZE/2 -1);i++){
         crc = calc_crc16(crc, cmd_data.values[i],poly16);
         // printf("CRC: %x \n", crc);
     }
+    stop_timer(); // stop the timer
+    
     // printf("CRC %x \n", crc);
     cmd_data.values[CRC_INDX]=crc;
 
@@ -92,14 +96,6 @@ int main (int argc, char *argv[])
         printf("CRC check failed: %x \n", crc);
     }
     
-
-
-
-    // print the values
-    // for(i = 0; i < BUF_SIZE/2; i++){
-    //     printf("%x ", cmd_data.values[i]);
-    // }
-    // printf("\r\n");
 
     // Fill the buffer with the command data
     memcpy(TXRX_buffer, cmd_data_ptr, BUF_SIZE); 
