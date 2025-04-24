@@ -82,12 +82,12 @@ main(int argc, char *argv[])
     /* send command buffer values */
     len = CMD_SIZE;
 
-    if (send(sfd, buf_data.bytes, len) != len) {
+    if (send(sfd, buf_data.bytes, len,0) != len) {
         fprintf(stderr, "partial/failed write\n");
         exit(EXIT_FAILURE);
     }
 
-    nread = recv(sfd, buf_data.bytes, CMD_SIZE);
+    nread = recv(sfd, buf_data.bytes, CMD_SIZE,0);
     if (nread == -1) {
         perror("read");
         exit(EXIT_FAILURE);
