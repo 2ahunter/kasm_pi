@@ -24,7 +24,7 @@ main(int argc, char *argv[])
     size_t           len;
     ssize_t          nread;
     struct addrinfo  hints;
-    struct addrinfo  *result, *rp;
+    struct addrinfo  *result, *rp; // pointers to linked list of addrinfo structures
    
     if (argc < 2) {
         fprintf(stderr, "Usage: %s host port\n", argv[0]);
@@ -32,12 +32,11 @@ main(int argc, char *argv[])
     }
 
     /* Obtain address(es) matching host/port. */
-
     memset(&hints, 0, sizeof(hints));
-    hints.ai_family = AF_UNSPEC;    /* Allow IPv4 or IPv6 */
-    hints.ai_socktype = SOCK_DGRAM; /* Datagram socket */
+    hints.ai_family = AF_UNSPEC;    // Allow IPv4 or IPv6
+    hints.ai_socktype = SOCK_DGRAM; // Datagram socket 
     hints.ai_flags = 0;
-    hints.ai_protocol = 0;          /* Any protocol */
+    hints.ai_protocol = 0;          // Any protocol 
 
     s = getaddrinfo(argv[1], argv[2], &hints, &result);
     if (s != 0) {
@@ -57,20 +56,20 @@ main(int argc, char *argv[])
             continue;
 
         if (connect(sfd, rp->ai_addr, rp->ai_addrlen) != -1)
-            break;                  /* Success */
+            break;                  // Success
 
         close(sfd);
     }
 
-    freeaddrinfo(result);           /* No longer needed */
-    if (rp == NULL) {               /* No address succeeded */
+    freeaddrinfo(result);           // No longer needed
+    if (rp == NULL) {               // No address succeeded
         fprintf(stderr, "Could not connect\n");
         exit(EXIT_FAILURE);
     }
 
     // populate the buffer with random values
     for(int i = 0; i < CMD_SIZE/2; i++){
-        int16_t value = (rand() % 0xFFFF)>>8; // generate small random value
+        int16_t value = (rand() % 0xFFFF)>>8; // generate small random values
         cmd_data.values[i] = value;
         buf_data.values[i] = htons(value);
     }
@@ -83,12 +82,12 @@ main(int argc, char *argv[])
     /* send command buffer values */
     len = CMD_SIZE;
 
-    if (write(sfd, buf_data.bytes, len) != len) {
+    if (send(sfd, buf_data.bytes, len) != len) {
         fprintf(stderr, "partial/failed write\n");
         exit(EXIT_FAILURE);
     }
 
-    nread = read(sfd, buf_data.bytes, CMD_SIZE);
+    nread = recv(sfd, buf_data.bytes, CMD_SIZE);
     if (nread == -1) {
         perror("read");
         exit(EXIT_FAILURE);
