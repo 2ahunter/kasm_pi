@@ -5,7 +5,7 @@
 #include"timers.h"
 
 
-struct timespec start, end;
+static struct timespec start, end;
 int elapsed_time= {0};
 
 /**
