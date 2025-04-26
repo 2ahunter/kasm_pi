@@ -35,6 +35,7 @@
 #define SPI_DEV     1   // SPI device number
 #define	SPI_CHAN	2   // which chip select
 #define SPEED       10   // in megahertz
+#define MHZ         1000000
 #define SPI_BUF_SIZE    54 // bytes, including crc16
 #define CRC_INDX    26  // index of the crc value in the data structure
 
@@ -176,7 +177,7 @@ int init(char *port){
     }
 
     // Initialize the SPI bus
-    if ((spi_fd = wiringPiSPIxSetupMode (SPI_DEV, SPI_CHAN, SPEED*100000,SPI_MODE_0)) < 0){
+    if ((spi_fd = wiringPiSPIxSetupMode (SPI_DEV, SPI_CHAN, SPEED*MHZ,SPI_MODE_0)) < 0){
         fprintf (stderr, "Failed to open the SPI bus: %s\n", strerror (errno)) ;
         return 1;
     }
