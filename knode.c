@@ -18,11 +18,13 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <arpa/inet.h>
+#include <pthread.h>
 
 #include "wiringPi.h"
 #include "wiringPiSPI.h"
 #include "crc_check.h"
 #include "timers.h"
+#include "knode.h"
 
 
 /*************** defines **********************/
@@ -44,11 +46,12 @@
 
 /********** module variables *****************/
 uint8_t cmd_data_avail = FALSE; // flag to indicate if command data is available
+uint8_t running = TRUE; // set flag to false to terminate the threads and exit the program
 
 union CMD_DATA {
     unsigned char bytes[SPI_BUF_SIZE];
     int16_t values[SPI_BUF_SIZE/2];
-} cmd_data, buf_data;
+} cmd_data;
 
 
 int spi_fd = {0}; // file descriptor for SPI
@@ -59,6 +62,10 @@ unsigned char TXRX_buffer[SPI_BUF_SIZE] = {0}; // buffer for SPI
 uint16_t poly16 = {0x3D65}; // CRC-16-DNP polynomial
 uint16_t init_val = {0xFFFF}; // initial value for CRC calculations
 uint16_t crc={0}; // variable for CRC calculation
+
+// mutex for thread synchronization
+pthread_mutex_t mutex;
+
 
 /********** functions *********************/
 
@@ -119,42 +126,59 @@ int init_UDP(char *port){
  * @brief Receive data over UDP
  * @return 0 on success, -1 on failure
  */
-int recv_UDP(void){
+void * recv_UDP(void *){
     int s;
+    uint16_t crc;
     ssize_t nread;
     socklen_t peer_addrlen;
     struct sockaddr_storage peer_addr;
+    union CMD_DATA buf_data;
+    memset(buf_data.bytes, 0, SPI_BUF_SIZE); // clear the UDP buffer
 
     char host[NI_MAXHOST], service[NI_MAXSERV];
 
     peer_addrlen = sizeof(peer_addr);
-    nread = recvfrom(udp_fd, buf_data.bytes, CMD_SIZE, 0,
-                        (struct sockaddr *) &peer_addr, &peer_addrlen);
-    if (nread == -1){
-        return -1; // Error receiving data
-    }
 
-    s = getnameinfo((struct sockaddr *) &peer_addr,
-                    peer_addrlen, host, NI_MAXHOST,
-                    service, NI_MAXSERV, NI_NUMERICSERV);
-    if (s == 0) {
-        printf("Received %zd bytes from %s:%s\n",
-                nread, host, service);
-        for (size_t i = 0; i < nread/2; i++) {
-            cmd_data.values[i] = ntohs(buf_data.values[i]);
-            printf("Received value %zu: %d\n", i, cmd_data.values[i]);
+    while(running == TRUE){
+
+        // Receive data from the UDP socket, note: blocking call
+        nread = recvfrom(udp_fd, buf_data.bytes, CMD_SIZE, 0,
+                         (struct sockaddr *)&peer_addr, &peer_addrlen);
+        if (nread == -1)
+        {
+            perror("read");
         }
-        cmd_data_avail = TRUE; // set the command data available flag
-    }
-    else
-        fprintf(stderr, "getnameinfo: %s\n", gai_strerror(s));
 
-    if (sendto(udp_fd, buf_data.bytes, nread, 0, (struct sockaddr *) &peer_addr,
-                peer_addrlen) != nread)
-    {
-        fprintf(stderr, "Error sending response\n");
+        s = getnameinfo((struct sockaddr *)&peer_addr,
+                        peer_addrlen, host, NI_MAXHOST,
+                        service, NI_MAXSERV, NI_NUMERICSERV);
+        if (s == 0)
+        {
+            printf("Received %zd bytes from %s:%s\n",
+                   nread, host, service);
+            for (size_t i = 0; i < nread / 2; i++)
+            {
+                buf_data.values[i] = ntohs(buf_data.values[i]);
+                printf("Received value %zu: %d\n", i, buf_data.values[i]);
+            }
+        
+            pthread_mutex_lock(&mutex); // lock the data
+            memcpy(cmd_data.values, buf_data.values, SPI_BUF_SIZE); // copy the data to the command data structure
+            crc = append_crc(); // compute the crc and append to the command data
+            pthread_mutex_unlock(&mutex); // unlock the mutex
+            cmd_data_avail = TRUE; // set the command data available flag
+        }
+        else
+            fprintf(stderr, "getnameinfo: %s\n", gai_strerror(s));
+
+        // if (sendto(udp_fd, buf_data.bytes, nread, 0, (struct sockaddr *)&peer_addr,
+        //            peer_addrlen) != nread)
+        // {
+        //     fprintf(stderr, "Error sending response\n");
+        // }
+
     }
-    return s;
+    pthread_exit(NULL); // Return NULL to indicate thread completion
 }
 
 
@@ -168,7 +192,6 @@ int init(char *port){
     uint8_t i = {0}; // loop index
     // init SPI buffer
     memset(cmd_data.bytes, 0, SPI_BUF_SIZE); // clear the SPI buffer
-    memset(buf_data.bytes, 0, SPI_BUF_SIZE); // clear the UDP buffer
 
     // Initialize the wiringPi library
     if (wiringPiSetup() == -1) {
@@ -203,6 +226,7 @@ uint16_t append_crc(void){
         crc = calc_crc16(crc, cmd_data.values[i],poly16);
     }
     cmd_data.values[i]=crc; // append the crc value to the command data
+
     return crc;
 }
 
@@ -227,8 +251,11 @@ uint16_t verify_crc(void){
 int send_SPI(void){
     
     uint8_t i = {0}; // loop index
-    // Fill the buffer with the command data
+
+    pthread_mutex_lock(&mutex); // lock the data
     memcpy(TXRX_buffer, cmd_data.bytes, SPI_BUF_SIZE); // < 200 nsec latency
+    pthread_mutex_unlock(&mutex); // unlock the data
+
     start_timer(); // start the timer
     // write data over SPI, note that TXRX buffer will be overwritten with received data
     if (wiringPiSPIxDataRW (SPI_DEV,SPI_CHAN, TXRX_buffer, sizeof(TXRX_buffer)) == -1){
@@ -251,6 +278,7 @@ int main (int argc, char *argv[])
     char* port = NULL; // port number
     uint32_t i = {0}; // loop index
     int res = {0}; // return value
+    pthread_t udp_thread; // thread for UDP server
 
     // check command line argument
     if (argc != 2) {
@@ -267,28 +295,17 @@ int main (int argc, char *argv[])
         return 1;
     }
 
+    pthread_mutex_init(&mutex, NULL); // initialize the mutex
+    pthread_create(&udp_thread, NULL, recv_UDP, NULL); // create the UDP thread
+
 
     while(1){
-        res = recv_UDP(); // receive data over UDP
         if(cmd_data_avail == TRUE){
-            //lock the data 
-            // copy the data to the command data structure
-            // unlock the data
-            // compute the crc and append to the command data
-            crc = append_crc();
-            // verify the crc value
-            crc = verify_crc();
-            if(crc == 0){
-                printf("CRC verified\n");
-                send_SPI(); // send command over SPI to KASM PCB
-            } else {
-                printf("CRC check failed: %x \n", crc);
-            }
+            send_SPI(); // send command over SPI to KASM PCB
             cmd_data_avail = FALSE;
         }
 
     }
-
     return 0;
 
 }
