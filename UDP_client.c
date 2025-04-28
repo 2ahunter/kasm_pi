@@ -100,6 +100,6 @@ main(int argc, char *argv[])
     //     buf_data.values[i] = ntohs(buf_data.values[i]);
     //     printf("Received value %zu: %d\n", i, buf_data.values[i]);
     // }
-
+    printf("Sent %zu bytes\n", len);
     exit(EXIT_SUCCESS);
 }
