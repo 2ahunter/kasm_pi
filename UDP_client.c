@@ -87,19 +87,19 @@ main(int argc, char *argv[])
         exit(EXIT_FAILURE);
     }
 
-    nread = recv(sfd, buf_data.bytes, CMD_SIZE,0);
-    if (nread == -1) {
-        perror("read");
-        exit(EXIT_FAILURE);
-    }
+    // nread = recv(sfd, buf_data.bytes, CMD_SIZE,0);
+    // if (nread == -1) {
+    //     perror("read");
+    //     exit(EXIT_FAILURE);
+    // }
 
-    /* convert buffer data to host byte order */
+    // /* convert buffer data to host byte order */
 
-    printf("Received %zd bytes\n", nread);
-    for (size_t i = 0; i < nread/2; i++) {
-        buf_data.values[i] = ntohs(buf_data.values[i]);
-        printf("Received value %zu: %d\n", i, buf_data.values[i]);
-    }
+    // printf("Received %zd bytes\n", nread);
+    // for (size_t i = 0; i < nread/2; i++) {
+    //     buf_data.values[i] = ntohs(buf_data.values[i]);
+    //     printf("Received value %zu: %d\n", i, buf_data.values[i]);
+    // }
 
     exit(EXIT_SUCCESS);
 }
