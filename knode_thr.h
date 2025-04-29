@@ -1,3 +1,10 @@
+#ifndef KNODE_THR_H
+#define KNODE_THR_H
+
+#include<stdint.h>
+
+
+
 /**
  * @file knode.h
  * @brief Header file for knode.c
@@ -45,4 +52,6 @@ uint16_t append_crc(void);
  * @return uint16_t crc value (0 indicates success)
  */
 uint16_t verify_crc(void);
+
+#endif // KNODE_THR_H
 

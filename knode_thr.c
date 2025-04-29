@@ -24,7 +24,7 @@
 #include "wiringPiSPI.h"
 #include "crc_check.h"
 #include "timers.h"
-#include "knode.h"
+#include "knode_thr.h"
 
 
 /*************** defines **********************/
