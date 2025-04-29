@@ -36,8 +36,8 @@
 
 #define SPI_DEV     1   // SPI device number
 #define	SPI_CHAN	2   // which chip select
-#define SPEED       10   // in megahertz
-#define MHZ         1000000
+#define SPEED       5   // in megahertz
+#define MHZ         1000000 // 1 MHz
 #define SPI_BUF_SIZE    54 // bytes, including crc16
 #define CRC_INDX    26  // index of the crc value in the data structure
 
@@ -262,12 +262,13 @@ int send_SPI(void){
         printf ("SPI failure: %s\n", strerror (errno)) ;
         return -1;
     } else {
+        stop_timer(); // stop the timer
         printf("Data received: \n");
         for(i = 0; i < SPI_BUF_SIZE; i ++){
             printf("%x ", TXRX_buffer[i]);
         }
     }
-    stop_timer(); // stop the timer
+    printf("\n");
     return 0;
 }
 
