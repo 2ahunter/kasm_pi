@@ -142,7 +142,7 @@ int recv_UDP(void){
                 nread, host, service);
         for (size_t i = 0; i < nread/2; i++) {
             cmd_data.values[i] = ntohs(buf_data.values[i]);
-            printf("Received value %zu: %d\n", i, cmd_data.values[i]);
+            // printf("Received value %zu: %d\n", i, cmd_data.values[i]);
         }
         cmd_data_avail = TRUE; // set the command data available flag
     }
@@ -235,10 +235,10 @@ int send_SPI(void){
         printf ("SPI failure: %s\n", strerror (errno)) ;
         return -1;
     } else {
-        printf("Data received: \n");
-        for(i = 0; i < SPI_BUF_SIZE; i ++){
-            printf("%x ", TXRX_buffer[i]);
-        }
+        printf("Actuator Data received \n");
+        // for(i = 0; i < SPI_BUF_SIZE; i ++){
+        //     printf("%x ", TXRX_buffer[i]);
+        // }
     }
     stop_timer(); // stop the timer
     return 0;
@@ -271,6 +271,7 @@ int main (int argc, char *argv[])
     while(1){
         res = recv_UDP(); // receive data over UDP
         if(cmd_data_avail == TRUE){
+            printf("Command data available\n");
             //lock the data 
             // copy the data to the command data structure
             // unlock the data
