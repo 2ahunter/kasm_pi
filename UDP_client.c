@@ -26,7 +26,7 @@ main(int argc, char *argv[])
     struct addrinfo  hints;
     struct addrinfo  *result, *rp; // pointers to linked list of addrinfo structures
    
-    if (argc < 2) {
+    if (argc < 3) {
         fprintf(stderr, "Usage: %s host port\n", argv[0]);
         exit(EXIT_FAILURE);
     }
@@ -79,7 +79,7 @@ main(int argc, char *argv[])
 
     if (setsockopt (sfd, SOL_SOCKET, SO_SNDTIMEO, &timeout,
                 sizeof timeout) < 0)
-                printf("setsockopt failed\n");
+        printf("setsockopt failed\n");
         exit(EXIT_FAILURE);
 
     // populate the buffer with random values
