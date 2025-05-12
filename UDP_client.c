@@ -73,14 +73,16 @@ main(int argc, char *argv[])
     timeout.tv_usec = 0;
     
     if (setsockopt (sfd, SOL_SOCKET, SO_RCVTIMEO, &timeout,
-                sizeof timeout) < 0)
+                sizeof timeout) < 0){
         printf("setsockopt failed\n");
         exit(EXIT_FAILURE);
+    }
 
     if (setsockopt (sfd, SOL_SOCKET, SO_SNDTIMEO, &timeout,
-                sizeof timeout) < 0)
+                sizeof timeout) < 0){
         printf("setsockopt failed\n");
         exit(EXIT_FAILURE);
+    }
 
     // populate the buffer with random values
     for(int i = 0; i < CMD_SIZE/2; i++){
