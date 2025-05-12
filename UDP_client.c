@@ -67,6 +67,21 @@ main(int argc, char *argv[])
         exit(EXIT_FAILURE);
     }
 
+    //set send and receive timeouts for the socket
+    struct timeval timeout;      
+    timeout.tv_sec = 1;
+    timeout.tv_usec = 0;
+    
+    if (setsockopt (sfd, SOL_SOCKET, SO_RCVTIMEO, &timeout,
+                sizeof timeout) < 0)
+        printf("setsockopt failed\n");
+        exit(EXIT_FAILURE);
+
+    if (setsockopt (sfd, SOL_SOCKET, SO_SNDTIMEO, &timeout,
+                sizeof timeout) < 0)
+                printf("setsockopt failed\n");
+        exit(EXIT_FAILURE);
+
     // populate the buffer with random values
     for(int i = 0; i < CMD_SIZE/2; i++){
         int16_t value = (rand() % 0xFFFF)>>8; // generate small random values
