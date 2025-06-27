@@ -72,8 +72,6 @@ int init_UDP(char *port){
     int sfd, s;
     struct addrinfo hints;
     struct addrinfo *result, *rp;
-    struct sockaddr_storage peer_addr;
-    socklen_t peer_addrlen;
 
     // Initialize the hints structure
     memset(&hints, 0, sizeof(hints));
@@ -140,7 +138,7 @@ int recv_UDP(void){
     if (s == 0) {
         printf("Received %zd bytes from %s:%s\n",
                 nread, host, service);
-        for (size_t i = 0; i < nread/2; i++) {
+        for (ssize_t i = 0; i < nread/2; i++) {
             cmd_data.values[i] = ntohs(buf_data.values[i]);
             // printf("Received value %zu: %d\n", i, cmd_data.values[i]);
         }
@@ -165,7 +163,7 @@ int recv_UDP(void){
  * @return uint8_t 0 on success, 1 on failure
  */
 int init(char *port){
-    uint8_t i = {0}; // loop index
+
     // init SPI buffer
     memset(cmd_data.bytes, 0, SPI_BUF_SIZE); // clear the SPI buffer
     memset(buf_data.bytes, 0, SPI_BUF_SIZE); // clear the UDP buffer
@@ -236,9 +234,9 @@ int send_SPI(void){
         return -1;
     } else {
         printf("Actuator Data received \n");
-        // for(i = 0; i < SPI_BUF_SIZE; i ++){
-        //     printf("%x ", TXRX_buffer[i]);
-        // }
+        for(i = 0; i < SPI_BUF_SIZE; i ++){
+            printf("%x ", TXRX_buffer[i]);
+        }
     }
     stop_timer(); // stop the timer
     return 0;
@@ -249,7 +247,6 @@ int send_SPI(void){
 int main (int argc, char *argv[])
 {
     char* port = NULL; // port number
-    uint32_t i = {0}; // loop index
     int res = {0}; // return value
 
     // check command line argument

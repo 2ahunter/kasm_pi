@@ -6,17 +6,14 @@ LDLIBS = -lwiringPi
 
 
 knode: $(objects)
-	cc -o $@ $^ $(LDLIBS) # $@ is the target, $^ are the prerequisites
+	cc -o $@ $^ $(LDLIBS)
 
-crc_check.o: crc_check.h
+crc_check.o: crc_check.c crc_check.h
 
-timers.o: timers.h
+timers.o: timers.c timers.h
 
-knode.o: crc_check.h timers.h
+knode.o: knode.c crc_check.h timers.h
 
-UDP_client: UDP_client.c
-	cc -o  $@ $^ 
-	
 .PHONY : clean
 clean :
 	rm knode $(objects)
