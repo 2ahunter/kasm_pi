@@ -34,7 +34,7 @@
 
 #define SPI_DEV     1   // SPI device number
 #define	SPI_CHAN	2   // which chip select
-#define SPEED       10   // in megahertz
+#define SPEED       1   // in megahertz
 #define MHZ         1000000
 #define SPI_BUF_SIZE    54 // bytes, including crc16
 #define CRC_INDX    26  // index of the crc value in the data structure
