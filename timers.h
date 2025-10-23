@@ -16,7 +16,7 @@ void start_timer();
 /**
  * @brief Stops the timer and prints the elapsed time.
  */
-void stop_timer();
+long int stop_timer();
 
 #endif // TIMERS_H
 

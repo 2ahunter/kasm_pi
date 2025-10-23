@@ -17,3 +17,4 @@ knode.o: knode.c crc_check.h timers.h
 .PHONY : clean
 clean :
 	rm knode $(objects)
+

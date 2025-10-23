@@ -18,6 +18,8 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <arpa/inet.h>
+#include <syslog.h>
+#include <poll.h>
 
 #include "wiringPi.h"
 #include "wiringPiSPI.h"
@@ -34,7 +36,7 @@
 
 #define SPI_DEV     1   // SPI device number
 #define	SPI_CHAN	2   // which chip select
-#define SPEED       1   // in megahertz
+#define SPEED       5   // in megahertz
 #define MHZ         1000000
 #define SPI_BUF_SIZE    54 // bytes, including crc16
 #define CRC_INDX    26  // index of the crc value in the data structure
@@ -50,7 +52,7 @@ union CMD_DATA {
     int16_t values[SPI_BUF_SIZE/2];
 } cmd_data, buf_data;
 
-
+long int elapsed_time_nsec = {0}; // We only measure time < 1 sec 
 int spi_fd = {0}; // file descriptor for SPI
 int udp_fd = {0}; // file descriptor for UDP
 unsigned char TXRX_buffer[SPI_BUF_SIZE] = {0}; // buffer for SPI
@@ -118,41 +120,49 @@ int init_UDP(char *port){
  * @return 0 on success, -1 on failure
  */
 int recv_UDP(void){
-    int s;
+    // int s;
+    int num_vals = CMD_SIZE / 2; // number of int16_t values
     ssize_t nread;
     socklen_t peer_addrlen;
     struct sockaddr_storage peer_addr;
-
     char host[NI_MAXHOST], service[NI_MAXSERV];
 
+   
     peer_addrlen = sizeof(peer_addr);
     nread = recvfrom(udp_fd, buf_data.bytes, CMD_SIZE, 0,
                         (struct sockaddr *) &peer_addr, &peer_addrlen);
-    if (nread == -1){
-        return -1; // Error receiving data
+
+
+    // getnmameinfo takes 80 usecs!
+    // s = getnameinfo((struct sockaddr *) &peer_addr,
+    //                 peer_addrlen, host, NI_MAXHOST,
+    //                 service, NI_MAXSERV, NI_NUMERICSERV);
+    if (nread == -1) {
+        fprintf(stderr, "Error receiving UDP data: %s\n", strerror(errno));
+        return -1;
     }
 
-    s = getnameinfo((struct sockaddr *) &peer_addr,
-                    peer_addrlen, host, NI_MAXHOST,
-                    service, NI_MAXSERV, NI_NUMERICSERV);
-    if (s == 0) {
-        printf("Received %zd bytes from %s:%s\n",
-                nread, host, service);
-        for (ssize_t i = 0; i < nread/2; i++) {
+    if (nread == CMD_SIZE) {
+        syslog(LOG_INFO, "Received %zd bytes", nread);
+
+        for (ssize_t i = 0; i < num_vals; i++) {
             cmd_data.values[i] = ntohs(buf_data.values[i]);
-            // printf("Received value %zu: %d\n", i, cmd_data.values[i]);
+            syslog(LOG_DEBUG, "Received value %zu: %d\n", i, cmd_data.values[i]);
         }
+
         cmd_data_avail = TRUE; // set the command data available flag
     }
-    else
-        fprintf(stderr, "getnameinfo: %s\n", gai_strerror(s));
+    // else
+    //     fprintf(stderr, "getnameinfo: %s\n", gai_strerror(s));
 
-    if (sendto(udp_fd, buf_data.bytes, nread, 0, (struct sockaddr *) &peer_addr,
-                peer_addrlen) != nread)
-    {
-        fprintf(stderr, "Error sending response\n");
-    }
-    return s;
+
+    // if (sendto(udp_fd, buf_data.bytes, nread, 0, (struct sockaddr *) &peer_addr,
+    //             peer_addrlen) != nread)
+    // {
+    //     fprintf(stderr, "Error sending response\n");
+    // }
+    // return s;
+    return nread;
 }
 
 
@@ -224,21 +234,25 @@ uint16_t verify_crc(void){
  */
 int send_SPI(void){
     
-    uint8_t i = {0}; // loop index
-    // Fill the buffer with the command data
+    // start_timer();
     memcpy(TXRX_buffer, cmd_data.bytes, SPI_BUF_SIZE); // < 200 nsec latency
-    start_timer(); // start the timer
+    // elapsed_time_nsec = stop_timer();
+    // syslog(LOG_INFO, "Elapsed time to copy to SPI buffer: %ld nsecs", elapsed_time_nsec);
+    // start_timer(); // start the timer
     // write data over SPI, note that TXRX buffer will be overwritten with received data
     if (wiringPiSPIxDataRW (SPI_DEV,SPI_CHAN, TXRX_buffer, sizeof(TXRX_buffer)) == -1){
-        printf ("SPI failure: %s\n", strerror (errno)) ;
+        syslog(LOG_ERR, "SPI failure: %s\n", strerror (errno)) ;
         return -1;
-    } else {
-        printf("Actuator Data received \n");
-        for(i = 0; i < SPI_BUF_SIZE; i ++){
-            printf("%x ", TXRX_buffer[i]);
-        }
     }
-    stop_timer(); // stop the timer
+    // char msg[200] = {0};
+    // sprintf(msg, "SPI transmitted values: ");
+    // for (int i = 0; i < CMD_SIZE; i++) {
+    //     sprintf(msg + strlen(msg), "%d ",TXRX_buffer[i]);
+    // }
+    // syslog(LOG_INFO, msg);
+    // memcpy(cmd_data.bytes, TXRX_buffer, SPI_BUF_SIZE); 
+    // elapsed_time_nsec = stop_timer(); // stop the timer
+    // syslog(LOG_INFO, "Elapsed time for SPI data transaction: %ld nsecs\n", elapsed_time_nsec);
     return 0;
 }
 
@@ -263,26 +277,37 @@ int main (int argc, char *argv[])
         fprintf(stderr, "Failed initialization, exiting...\n");
         return 1;
     }
+    // set up polling
+    struct pollfd fds[1]; //only monitor UDP for now
+    fds[0].fd = udp_fd;
+    fds[0].events = POLLIN; // look for new data
+    int poll_ret = {0};
 
+    openlog(NULL, LOG_PERROR, LOG_LOCAL6); // Open syslog for logging
+    int mask = LOG_MASK(LOG_INFO) | LOG_MASK(LOG_ERR) | LOG_MASK(LOG_NOTICE);
+
+    setlogmask(mask);
+    syslog(LOG_INFO, "Starting knode on port %s.\n",port);
 
     while(1){
-        res = recv_UDP(); // receive data over UDP
-        if(cmd_data_avail == TRUE){
-            printf("Command data available\n");
-            //lock the data 
-            // copy the data to the command data structure
-            // unlock the data
-            // compute the crc and append to the command data
-            crc = append_crc();
-            // verify the crc value
-            crc = verify_crc();
-            if(crc == 0){
-                printf("CRC verified\n");
+        poll_ret = poll(fds, 1, 0);
+        if(poll_ret < 0) exit(EXIT_FAILURE); // error
+        if(poll_ret > 0) {
+            start_timer(); 
+            res = recv_UDP(); // receive data over UDP
+            if(cmd_data_avail == TRUE){
+                syslog(LOG_DEBUG, "Command data available\n");
+                // compute the crc and append to the command data
+                crc = append_crc();
+                syslog(LOG_DEBUG, "CRC verified\n");
+                // start_timer(); 
                 send_SPI(); // send command over SPI to KASM PCB
-            } else {
-                printf("CRC check failed: %x \n", crc);
+                // elapsed_time_nsec = stop_timer();
+                // syslog(LOG_INFO, "Elapsed SPI time %ld", elapsed_time_nsec);
+                cmd_data_avail = FALSE; // reset the flag
             }
-            cmd_data_avail = FALSE;
+            elapsed_time_nsec = stop_timer();
+            syslog(LOG_INFO, "Elapsed loop time %ld", elapsed_time_nsec);
         }
 
     }
