@@ -138,12 +138,12 @@ int recv_UDP(void){
     //                 peer_addrlen, host, NI_MAXHOST,
     //                 service, NI_MAXSERV, NI_NUMERICSERV);
     if (nread == -1) {
-        fprintf(stderr, "Error receiving UDP data: %s\n", strerror(errno));
+        syslog(LOG_ERR, "Error receiving UDP data: %s\n", strerror(errno));
         return -1;
     }
 
     if (nread == CMD_SIZE) {
-        syslog(LOG_INFO, "Received %zd bytes", nread);
+        syslog(LOG_DEBUG, "Received %zd bytes", nread);
 
         for (ssize_t i = 0; i < num_vals; i++) {
             cmd_data.values[i] = ntohs(buf_data.values[i]);
@@ -152,9 +152,6 @@ int recv_UDP(void){
 
         cmd_data_avail = TRUE; // set the command data available flag
     }
-    // else
-    //     fprintf(stderr, "getnameinfo: %s\n", gai_strerror(s));
-
 
     // if (sendto(udp_fd, buf_data.bytes, nread, 0, (struct sockaddr *) &peer_addr,
     //             peer_addrlen) != nread)
