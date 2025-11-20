@@ -18,6 +18,8 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <arpa/inet.h>
+#include <syslog.h>
+#include <poll.h>
 #include <pthread.h>
 
 #include "wiringPi.h"
@@ -47,6 +49,7 @@
 /********** module variables *****************/
 uint8_t cmd_data_avail = FALSE; // flag to indicate if command data is available
 uint8_t running = TRUE; // set flag to false to terminate the threads and exit the program
+uint8_t main_run = TRUE;
 
 union CMD_DATA {
     unsigned char bytes[SPI_BUF_SIZE];
@@ -79,8 +82,6 @@ int init_UDP(char *port){
     int sfd, s;
     struct addrinfo hints;
     struct addrinfo *result, *rp;
-    struct sockaddr_storage peer_addr;
-    socklen_t peer_addrlen;
 
     // Initialize the hints structure
     memset(&hints, 0, sizeof(hints));
@@ -126,57 +127,49 @@ int init_UDP(char *port){
  * @brief Receive data over UDP
  * @return 0 on success, -1 on failure
  */
-void * recv_UDP(void *){
-    int s;
-    uint16_t crc;
+void * recv_UDP(void *data){
+
     ssize_t nread;
     socklen_t peer_addrlen;
     struct sockaddr_storage peer_addr;
     union CMD_DATA buf_data;
     memset(buf_data.bytes, 0, SPI_BUF_SIZE); // clear the UDP buffer
 
-    char host[NI_MAXHOST], service[NI_MAXSERV];
-
     peer_addrlen = sizeof(peer_addr);
+    // set up polling
+    struct pollfd fds[1]; //monitor UDP for incoming data
+    fds[0].fd = udp_fd;
+    fds[0].events = POLLIN; // look for new data
+    int poll_ret = {0};
 
     while(running == TRUE){
-
-        // Receive data from the UDP socket, note: blocking call
-        nread = recvfrom(udp_fd, buf_data.bytes, CMD_SIZE, 0,
-                         (struct sockaddr *)&peer_addr, &peer_addrlen);
-        if (nread == -1)
-        {
-            perror("read");
-        }
-
-        s = getnameinfo((struct sockaddr *)&peer_addr,
-                        peer_addrlen, host, NI_MAXHOST,
-                        service, NI_MAXSERV, NI_NUMERICSERV);
-        if (s == 0)
-        {
-            printf("Received %zd bytes from %s:%s\n",
-                   nread, host, service);
-            for (size_t i = 0; i < nread / 2; i++)
+        poll_ret = poll(fds, 1, 0);
+        if(poll_ret < 0) exit(EXIT_FAILURE); // error
+        if(poll_ret > 0) {
+            syslog(LOG_NOTICE, "UDP data available");
+            // Receive data from the UDP socket
+            nread = recvfrom(udp_fd, buf_data.bytes, CMD_SIZE, 0,
+                            (struct sockaddr *)&peer_addr, &peer_addrlen);
+            if (nread == -1)
             {
-                buf_data.values[i] = ntohs(buf_data.values[i]);
-                printf("Received value %zu: %d\n", i, buf_data.values[i]);
+                syslog(LOG_ERR, "Error receiving UDP data: %s\n", strerror(errno));
             }
-        
-            pthread_mutex_lock(&mutex); // lock the data
-            memcpy(cmd_data.values, buf_data.values, SPI_BUF_SIZE); // copy the data to the command data structure
-            crc = append_crc(); // compute the crc and append to the command data
-            pthread_mutex_unlock(&mutex); // unlock the mutex
-            cmd_data_avail = TRUE; // set the command data available flag
+
+            if (nread == CMD_SIZE) {
+                syslog(LOG_DEBUG, "Received %zd bytes", nread);
+                pthread_mutex_lock(&mutex); // lock the data
+                for (size_t i = 0; i < nread / 2; i++) {
+                    cmd_data.values[i] = ntohs(buf_data.values[i]);
+                    syslog(LOG_DEBUG, "Received value %zu: %d\n", i, buf_data.values[i]);
+                }
+                crc = append_crc(); // compute the crc and append to the command data
+                pthread_mutex_unlock(&mutex); // unlock the mutex
+                cmd_data_avail = TRUE; // set the command data available flag
+            }
+            else {
+                syslog(LOG_ERR, "Received %zd bytes, expected %d bytes", nread, CMD_SIZE);
+            }
         }
-        else
-            fprintf(stderr, "getnameinfo: %s\n", gai_strerror(s));
-
-        // if (sendto(udp_fd, buf_data.bytes, nread, 0, (struct sockaddr *)&peer_addr,
-        //            peer_addrlen) != nread)
-        // {
-        //     fprintf(stderr, "Error sending response\n");
-        // }
-
     }
     pthread_exit(NULL); // Return NULL to indicate thread completion
 }
@@ -189,8 +182,7 @@ void * recv_UDP(void *){
  * @return uint8_t 0 on success, 1 on failure
  */
 int init(char *port){
-    uint8_t i = {0}; // loop index
-    // init SPI buffer
+
     memset(cmd_data.bytes, 0, SPI_BUF_SIZE); // clear the SPI buffer
 
     // Initialize the wiringPi library
@@ -249,26 +241,16 @@ uint16_t verify_crc(void){
  * @return 0 on success
  */
 int send_SPI(void){
-    
-    uint8_t i = {0}; // loop index
 
     pthread_mutex_lock(&mutex); // lock the data
     memcpy(TXRX_buffer, cmd_data.bytes, SPI_BUF_SIZE); // < 200 nsec latency
     pthread_mutex_unlock(&mutex); // unlock the data
 
-    start_timer(); // start the timer
     // write data over SPI, note that TXRX buffer will be overwritten with received data
     if (wiringPiSPIxDataRW (SPI_DEV,SPI_CHAN, TXRX_buffer, sizeof(TXRX_buffer)) == -1){
-        printf ("SPI failure: %s\n", strerror (errno)) ;
+        syslog(LOG_ERR, "SPI failure: %s", strerror (errno)) ;
         return -1;
-    } else {
-        stop_timer(); // stop the timer
-        printf("Data received: \n");
-        for(i = 0; i < SPI_BUF_SIZE; i ++){
-            printf("%x ", TXRX_buffer[i]);
-        }
-    }
-    printf("\n");
+    } 
     return 0;
 }
 
@@ -277,8 +259,6 @@ int send_SPI(void){
 int main (int argc, char *argv[])
 {
     char* port = NULL; // port number
-    uint32_t i = {0}; // loop index
-    int res = {0}; // return value
     pthread_t udp_thread; // thread for UDP server
 
     // check command line argument
@@ -296,16 +276,21 @@ int main (int argc, char *argv[])
         return 1;
     }
 
+    openlog(NULL, LOG_PERROR, LOG_LOCAL6); // Open syslog for logging
+    int mask = LOG_MASK(LOG_INFO) | LOG_MASK(LOG_ERR) | LOG_MASK(LOG_NOTICE);
+
+    setlogmask(mask);
+    syslog(LOG_INFO, "Starting knode on port %s.\n",port);
+
     pthread_mutex_init(&mutex, NULL); // initialize the mutex
     pthread_create(&udp_thread, NULL, recv_UDP, NULL); // create the UDP thread
 
 
-    while(1){
+    while(main_run == TRUE){
         if(cmd_data_avail == TRUE){
             send_SPI(); // send command over SPI to KASM PCB
             cmd_data_avail = FALSE;
         }
-
     }
     return 0;
 

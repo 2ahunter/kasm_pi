@@ -238,7 +238,7 @@ int send_SPI(void){
     // start_timer(); // start the timer
     // write data over SPI, note that TXRX buffer will be overwritten with received data
     if (wiringPiSPIxDataRW (SPI_DEV,SPI_CHAN, TXRX_buffer, sizeof(TXRX_buffer)) == -1){
-        syslog(LOG_ERR, "SPI failure: %s\n", strerror (errno)) ;
+        syslog(LOG_ERR, "SPI failure: %s", strerror (errno)) ;
         return -1;
     }
     // char msg[200] = {0};
