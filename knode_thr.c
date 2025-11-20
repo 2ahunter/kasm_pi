@@ -21,6 +21,8 @@
 #include <syslog.h>
 #include <poll.h>
 #include <pthread.h>
+#include <sched.h>
+#include <sys/mman.h>
 
 #include "wiringPi.h"
 #include "wiringPiSPI.h"
@@ -56,7 +58,7 @@ union CMD_DATA {
     int16_t values[SPI_BUF_SIZE/2];
 } cmd_data;
 
-
+long int elapsed_time_nsec = {0}; // We only measure time < 1 sec 
 int spi_fd = {0}; // file descriptor for SPI
 int udp_fd = {0}; // file descriptor for UDP
 unsigned char TXRX_buffer[SPI_BUF_SIZE] = {0}; // buffer for SPI
@@ -68,7 +70,7 @@ uint16_t crc={0}; // variable for CRC calculation
 
 // mutex for thread synchronization
 pthread_mutex_t mutex;
-
+pthread_mutexattr_t mattr;
 
 /********** functions *********************/
 
@@ -123,6 +125,20 @@ int init_UDP(char *port){
     return sfd;
 }
 
+static void getinfo()
+{
+    struct sched_param param;
+    int policy;
+
+    sched_getparam(0, &param);
+    fprintf(stderr, "Priority of this process: %d\n", param.sched_priority);
+
+    pthread_getschedparam(pthread_self(), &policy, &param);
+
+    fprintf(stderr, "Priority of the thread: %d, current policy is: %d and should be %d\n",
+              param.sched_priority, policy, SCHED_FIFO);
+}
+
 /**
  * @brief Receive data over UDP
  * @return 0 on success, -1 on failure
@@ -141,12 +157,12 @@ void * recv_UDP(void *data){
     fds[0].fd = udp_fd;
     fds[0].events = POLLIN; // look for new data
     int poll_ret = {0};
-
+    getinfo();
     while(running == TRUE){
         poll_ret = poll(fds, 1, 0);
         if(poll_ret < 0) exit(EXIT_FAILURE); // error
         if(poll_ret > 0) {
-            syslog(LOG_NOTICE, "UDP data available");
+            start_timer();
             // Receive data from the UDP socket
             nread = recvfrom(udp_fd, buf_data.bytes, CMD_SIZE, 0,
                             (struct sockaddr *)&peer_addr, &peer_addrlen);
@@ -173,7 +189,6 @@ void * recv_UDP(void *data){
     }
     pthread_exit(NULL); // Return NULL to indicate thread completion
 }
-
 
 
 /**
@@ -258,6 +273,14 @@ int send_SPI(void){
 
 int main (int argc, char *argv[])
 {
+    // Lock the memory
+    mlockall(MCL_CURRENT | MCL_FUTURE);
+
+    // Init mutex with priority inheritance
+    pthread_mutexattr_init(&mattr);
+    pthread_mutexattr_setprotocol(&mattr, PTHREAD_PRIO_INHERIT);
+    pthread_mutex_init(&mutex, &mattr);
+
     char* port = NULL; // port number
     pthread_t udp_thread; // thread for UDP server
 
@@ -280,16 +303,48 @@ int main (int argc, char *argv[])
     int mask = LOG_MASK(LOG_INFO) | LOG_MASK(LOG_ERR) | LOG_MASK(LOG_NOTICE);
 
     setlogmask(mask);
+
+
+    // Initialize the pthread attributes
+    pthread_attr_t attr;
+    int ret = pthread_attr_init(&attr);
+    if (ret != 0){
+        syslog(LOG_ERR, "pthread_attr_init error: %d, meaning: %s\n", ret, strerror(ret));
+        return 1;
+    }
+
+    // Set the scheduler policy
+    ret = pthread_attr_setschedpolicy(&attr, SCHED_FIFO);
+    if (ret != 0){
+        syslog(LOG_ERR, "pthread_attr_setschedpolicy error: %d, meaning: %s\n", ret, strerror(ret));
+        return 1;
+    }
+
+    // Set the scheduler priority
+    struct sched_param param;
+    param.sched_priority = 80;
+    ret = pthread_attr_setschedparam(&attr, &param);
+    if (ret != 0){
+        syslog(LOG_ERR, "pthread_attr_setschedparam error: %d, meaning: %s\n", ret, strerror(ret));
+        return 1;
+    }
+
+    // Make sure threads created using the thread_attr_ takes the value
+    // from the attribute instead of inherit from the parent thread.
+    ret = pthread_attr_setinheritsched(&attr, PTHREAD_EXPLICIT_SCHED);
+    if (ret != 0){
+        syslog(LOG_ERR, "pthread_attr_setinheritsched error: %d, meaning: %s\n", ret, strerror(ret));
+        return 1;
+    }
     syslog(LOG_INFO, "Starting knode on port %s.\n",port);
-
-    pthread_mutex_init(&mutex, NULL); // initialize the mutex
-    pthread_create(&udp_thread, NULL, recv_UDP, NULL); // create the UDP thread
-
+    pthread_create(&udp_thread, &attr, recv_UDP, NULL); // create the UDP thread
 
     while(main_run == TRUE){
         if(cmd_data_avail == TRUE){
             send_SPI(); // send command over SPI to KASM PCB
             cmd_data_avail = FALSE;
+            elapsed_time_nsec = stop_timer();
+            syslog(LOG_INFO, "Elapsed loop time %ld", elapsed_time_nsec);
         }
     }
     return 0;
