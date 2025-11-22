@@ -2,7 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
-#include"timers.h"
+#include "timers.h"
 
 
 static struct timespec start = {0};
@@ -29,6 +29,7 @@ long int stop_timer() {
         perror("clock_gettime");
         exit(EXIT_FAILURE);
     }
-    elapsed_time = (end.tv_nsec - start.tv_nsec) ;
+    long int sec = (end.tv_sec - start.tv_sec) * 1e9;
+    elapsed_time = (end.tv_nsec - start.tv_nsec + sec) ;
     return elapsed_time;
 }

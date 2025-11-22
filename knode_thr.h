@@ -14,6 +14,34 @@
  */
 
 /**
+ * @brief Normalize timer to account for seconds rollover
+ * @param timespec_t ts Pointer to timespec structure to normalize
+ */
+static void normalize_timespec(struct timespec *ts);
+
+/**
+* @brief get thread info
+*/
+ static void getinfo();
+
+
+ /**
+* brief SPI write thread
+* Note: This thread sleeps until a condiiton variable is signaled
+* by the rec_UDP thread indicating new data is available.
+* Then it sends the data over SPI to the KASM PCB.
+* return: NULL
+*/
+void * send_SPI_thread(void *data);
+
+/**
+ * @brief Receive data over UDP thread
+ * @note This thread polls for UDP packet and signals the SPI thread when new data is available. 
+ * 
+ */
+void * recv_UDP(void *data);
+
+/**
  * @brief Initialize the UDP server
  * @param port Port number to bind to
  * @return int Socket file descriptor   

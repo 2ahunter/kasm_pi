@@ -48,10 +48,14 @@
 #define MAX_VAL     24000
 #define MIN_VAL     -24000
 
+#define PERIOD_NSEC  (400*1000) // 400 usec interval
+#define NSEC_PER_SEC (1000*1000*1000)
+
 /********** module variables *****************/
 uint8_t cmd_data_avail = FALSE; // flag to indicate if command data is available
 uint8_t running = TRUE; // set flag to false to terminate the threads and exit the program
 uint8_t main_run = TRUE;
+
 
 union CMD_DATA {
     unsigned char bytes[SPI_BUF_SIZE];
@@ -68,11 +72,24 @@ uint16_t poly16 = {0x3D65}; // CRC-16-DNP polynomial
 uint16_t init_val = {0xFFFF}; // initial value for CRC calculations
 uint16_t crc={0}; // variable for CRC calculation
 
+// condition variable for thread synchronization
+pthread_cond_t cond_var = PTHREAD_COND_INITIALIZER;
+
 // mutex for thread synchronization
 pthread_mutex_t mutex;
 pthread_mutexattr_t mattr;
 
 /********** functions *********************/
+/**
+ * @brief Normalize timer to account for seconds rollover
+ * @param timespec_t ts Pointer to timespec structure to normalize
+ */
+static void normalize_timespec(struct timespec *ts) {
+    while (ts->tv_nsec >= NSEC_PER_SEC) {
+        ts->tv_sec += 1;
+        ts->tv_nsec -= NSEC_PER_SEC;
+    }
+}
 
 /**
  * @brief Initialize the UDP server
@@ -139,6 +156,35 @@ static void getinfo()
               param.sched_priority, policy, SCHED_FIFO);
 }
 
+
+/**
+* brief SPI write thread
+* Note: This thread sleeps until a condiiton variable is signaled
+* by the rec_UDP thread indicating new data is available.
+* Then it sends the data over SPI to the KASM PCB.
+* return: NULL
+*/
+void * send_SPI_thread(void *data){
+    pthread_mutex_lock(&mutex);
+    while(TRUE){
+        // check the predicate
+        while(cmd_data_avail == FALSE){
+            pthread_cond_wait(&cond_var, &mutex); // wait for signal
+        }
+        start_timer();
+        // send SPI data
+        memcpy(TXRX_buffer, cmd_data.bytes, SPI_BUF_SIZE); 
+        if (wiringPiSPIxDataRW (SPI_DEV,SPI_CHAN, TXRX_buffer, sizeof(TXRX_buffer)) == -1){
+            syslog(LOG_ERR, "SPI failure: %s", strerror (errno)) ;
+        } 
+        elapsed_time_nsec = stop_timer();
+        syslog(LOG_INFO, "Elapsed SPI time %ld", elapsed_time_nsec);
+        cmd_data_avail = FALSE; // reset the flag
+        pthread_mutex_unlock(&mutex); // unlock the data
+    }
+    pthread_exit(NULL); // Return NULL to indicate thread completion
+}
+
 /**
  * @brief Receive data over UDP
  * @return 0 on success, -1 on failure
@@ -149,7 +195,10 @@ void * recv_UDP(void *data){
     socklen_t peer_addrlen;
     struct sockaddr_storage peer_addr;
     union CMD_DATA buf_data;
-    memset(buf_data.bytes, 0, SPI_BUF_SIZE); // clear the UDP buffer
+    struct timespec prd_tmr={0};
+    int timeout_ms = 1000; // 1 second timeout for polling
+
+    memset(buf_data.bytes, 0, SPI_BUF_SIZE); // init the UDP buffer
 
     peer_addrlen = sizeof(peer_addr);
     // set up polling
@@ -159,10 +208,10 @@ void * recv_UDP(void *data){
     int poll_ret = {0};
     getinfo();
     while(running == TRUE){
-        poll_ret = poll(fds, 1, 0);
+        poll_ret = poll(fds, 1, timeout_ms);
         if(poll_ret < 0) exit(EXIT_FAILURE); // error
         if(poll_ret > 0) {
-            start_timer();
+            clock_gettime(CLOCK_MONOTONIC, &prd_tmr);
             // Receive data from the UDP socket
             nread = recvfrom(udp_fd, buf_data.bytes, CMD_SIZE, 0,
                             (struct sockaddr *)&peer_addr, &peer_addrlen);
@@ -179,8 +228,13 @@ void * recv_UDP(void *data){
                     syslog(LOG_DEBUG, "Received value %zu: %d\n", i, buf_data.values[i]);
                 }
                 crc = append_crc(); // compute the crc and append to the command data
-                pthread_mutex_unlock(&mutex); // unlock the mutex
                 cmd_data_avail = TRUE; // set the command data available flag
+                pthread_cond_signal(&cond_var); // signal SPI thread that new data is available
+                pthread_mutex_unlock(&mutex); // unlock the mutex
+                // Calculate next wake-up time
+                prd_tmr.tv_nsec += PERIOD_NSEC;
+                normalize_timespec(&prd_tmr);
+                clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &prd_tmr, NULL);
             }
             else {
                 syslog(LOG_ERR, "Received %zd bytes, expected %d bytes", nread, CMD_SIZE);
@@ -276,6 +330,8 @@ int main (int argc, char *argv[])
     // Lock the memory
     mlockall(MCL_CURRENT | MCL_FUTURE);
 
+    // Initialize the condition variable
+    pthread_cond_init(&cond_var, NULL);
     // Init mutex with priority inheritance
     pthread_mutexattr_init(&mattr);
     pthread_mutexattr_setprotocol(&mattr, PTHREAD_PRIO_INHERIT);
@@ -283,6 +339,7 @@ int main (int argc, char *argv[])
 
     char* port = NULL; // port number
     pthread_t udp_thread; // thread for UDP server
+    pthread_t spi_thread; // thread for SPI communication
 
     // check command line argument
     if (argc != 2) {
@@ -299,12 +356,12 @@ int main (int argc, char *argv[])
         return 1;
     }
 
-    openlog(NULL, LOG_PERROR, LOG_LOCAL6); // Open syslog for logging
+    openlog(NULL, LOG_PID, LOG_LOCAL6); // Open syslog for logging
     int mask = LOG_MASK(LOG_INFO) | LOG_MASK(LOG_ERR) | LOG_MASK(LOG_NOTICE);
 
     setlogmask(mask);
 
-
+    //TODO convert this to an init function 
     // Initialize the pthread attributes
     pthread_attr_t attr;
     int ret = pthread_attr_init(&attr);
@@ -338,15 +395,18 @@ int main (int argc, char *argv[])
     }
     syslog(LOG_INFO, "Starting knode on port %s.\n",port);
     pthread_create(&udp_thread, &attr, recv_UDP, NULL); // create the UDP thread
+    pthread_create(&spi_thread,&attr, send_SPI_thread, NULL); // create the SPI thread
 
-    while(main_run == TRUE){
-        if(cmd_data_avail == TRUE){
-            send_SPI(); // send command over SPI to KASM PCB
-            cmd_data_avail = FALSE;
-            elapsed_time_nsec = stop_timer();
-            syslog(LOG_INFO, "Elapsed loop time %ld", elapsed_time_nsec);
-        }
-    }
+    // while(main_run == TRUE){
+    //     if(cmd_data_avail == TRUE){
+    //         send_SPI(); // send command over SPI to KASM PCB
+    //         cmd_data_avail = FALSE;
+    //         elapsed_time_nsec = stop_timer();
+    //         syslog(LOG_INFO, "Elapsed loop time %ld", elapsed_time_nsec);
+    //     }
+    // }
+    pthread_join(udp_thread, NULL);
+    pthread_join(spi_thread, NULL);
     return 0;
 
 }
