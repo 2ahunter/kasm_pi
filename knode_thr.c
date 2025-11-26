@@ -37,12 +37,18 @@
 
 #define	TRUE	(1==1)
 #define	FALSE	(!TRUE)
+#define REALTIME TRUE
+#define NUM_THREADS 2
 
-#define SPI_DEV     1   // SPI device number
-#define	SPI_CHAN	2   // which chip select
+
+#define SPI_DEV0    0   
+#define SPI_DEV1    1   
+#define SPI_DEV3    3   
+#define SPI_DEV4    4   
+#define SPI_DEV5    5   
+#define	SPI_CHAN	0   // only use channel 0 for all SPI devices
 #define SPEED       5   // in megahertz
 #define MHZ         1000000 // 1 MHz
-#define SPI_BUF_SIZE    54 // bytes, including crc16
 #define CRC_INDX    26  // index of the crc value in the data structure
 
 #define MAX_VAL     24000
@@ -52,20 +58,17 @@
 #define NSEC_PER_SEC (1000*1000*1000)
 
 /********** module variables *****************/
-uint8_t cmd_data_avail = FALSE; // flag to indicate if command data is available
 uint8_t running = TRUE; // set flag to false to terminate the threads and exit the program
 uint8_t main_run = TRUE;
 
 
-union CMD_DATA {
-    unsigned char bytes[SPI_BUF_SIZE];
-    int16_t values[SPI_BUF_SIZE/2];
-} cmd_data;
+union CMD_DATA cmd_data[NUM_THREADS];
+thread_cfg_t thread_cfgs[NUM_THREADS];
 
 long int elapsed_time_nsec = {0}; // We only measure time < 1 sec 
 int spi_fd = {0}; // file descriptor for SPI
 int udp_fd = {0}; // file descriptor for UDP
-unsigned char TXRX_buffer[SPI_BUF_SIZE] = {0}; // buffer for SPI
+
 
 // checksum parameters
 uint16_t poly16 = {0x3D65}; // CRC-16-DNP polynomial
@@ -73,10 +76,10 @@ uint16_t init_val = {0xFFFF}; // initial value for CRC calculations
 uint16_t crc={0}; // variable for CRC calculation
 
 // condition variable for thread synchronization
-pthread_cond_t cond_var = PTHREAD_COND_INITIALIZER;
+pthread_cond_t cond_var[NUM_THREADS];
 
-// mutex for thread synchronization
-pthread_mutex_t mutex;
+// mutexes for thread synchronization
+pthread_mutex_t mutex[NUM_THREADS];
 pthread_mutexattr_t mattr;
 
 /********** functions *********************/
@@ -158,29 +161,34 @@ static void getinfo()
 
 
 /**
-* brief SPI write thread
-* Note: This thread sleeps until a condiiton variable is signaled
+* @brief SPI write thread
+* @param thr_cfg Pointer to thread configuration structure
+* @note: This thread sleeps until a condiiton variable is signaled
 * by the rec_UDP thread indicating new data is available.
 * Then it sends the data over SPI to the KASM PCB.
-* return: NULL
+* @return: NULL
 */
-void * send_SPI_thread(void *data){
-    pthread_mutex_lock(&mutex);
+void * send_SPI_thread(void *thr_cfg){
+    unsigned char TXRX_buffer[SPI_BUF_SIZE] = {0}; // buffer for SPI
+    thread_cfg_t *cfg = (thread_cfg_t *)thr_cfg;
+    memset(cmd_data[cfg->thread_id].bytes, 0, SPI_BUF_SIZE); // clear the SPI buffer
+
+    struct timespec tmr={0};
+    pthread_mutex_lock(&mutex[cfg->thread_id]);
     while(TRUE){
         // check the predicate
-        while(cmd_data_avail == FALSE){
-            pthread_cond_wait(&cond_var, &mutex); // wait for signal
+        while(cfg->data_ready == FALSE){
+            pthread_cond_wait(&cond_var[cfg->thread_id], &mutex[cfg->thread_id]); // wait for signal
         }
-        start_timer();
         // send SPI data
-        memcpy(TXRX_buffer, cmd_data.bytes, SPI_BUF_SIZE); 
-        if (wiringPiSPIxDataRW (SPI_DEV,SPI_CHAN, TXRX_buffer, sizeof(TXRX_buffer)) == -1){
+        memcpy(TXRX_buffer, cmd_data[cfg->thread_id].bytes, SPI_BUF_SIZE); 
+        if (wiringPiSPIxDataRW (cfg->spi_dev,cfg->spi_channel, TXRX_buffer, sizeof(TXRX_buffer)) == -1){
             syslog(LOG_ERR, "SPI failure: %s", strerror (errno)) ;
         } 
-        elapsed_time_nsec = stop_timer();
-        syslog(LOG_INFO, "Elapsed SPI time %ld", elapsed_time_nsec);
-        cmd_data_avail = FALSE; // reset the flag
-        pthread_mutex_unlock(&mutex); // unlock the data
+        clock_gettime(CLOCK_MONOTONIC, &tmr);
+        syslog(LOG_INFO,"SPI[%d] time: %ld.%09ld",cfg->thread_id, tmr.tv_sec, tmr.tv_nsec);
+        cfg->data_ready = FALSE; // reset the flag
+        pthread_mutex_unlock(&mutex[cfg->thread_id]); // unlock the data
     }
     pthread_exit(NULL); // Return NULL to indicate thread completion
 }
@@ -222,15 +230,21 @@ void * recv_UDP(void *data){
 
             if (nread == CMD_SIZE) {
                 syslog(LOG_DEBUG, "Received %zd bytes", nread);
-                pthread_mutex_lock(&mutex); // lock the data
-                for (size_t i = 0; i < nread / 2; i++) {
-                    cmd_data.values[i] = ntohs(buf_data.values[i]);
-                    syslog(LOG_DEBUG, "Received value %zu: %d\n", i, buf_data.values[i]);
+                for(int thr=0;thr<NUM_THREADS;thr++){
+                    pthread_mutex_lock(&mutex[thr]); // lock the mutex
+                    for (size_t i = 0; i < nread / 2; i++) {
+                        cmd_data[thr].values[i] = ntohs(buf_data.values[i]);
+                        syslog(LOG_DEBUG, "Received value %zu: %d\n", i, buf_data.values[i]);
+                    }
+                crc = append_crc(&cmd_data[thr]); // compute the crc and append to the command data
                 }
-                crc = append_crc(); // compute the crc and append to the command data
-                cmd_data_avail = TRUE; // set the command data available flag
-                pthread_cond_signal(&cond_var); // signal SPI thread that new data is available
-                pthread_mutex_unlock(&mutex); // unlock the mutex
+
+                for(int thr=0;thr<NUM_THREADS;thr++){
+                    thread_cfgs[thr].data_ready = TRUE; // set the data ready flag
+                    pthread_cond_signal(&cond_var[thr]); // signal SPI thread that new data is available
+                    pthread_mutex_unlock(&mutex[thr]); // unlock the mutex
+                }
+
                 // Calculate next wake-up time
                 prd_tmr.tv_nsec += PERIOD_NSEC;
                 normalize_timespec(&prd_tmr);
@@ -244,26 +258,51 @@ void * recv_UDP(void *data){
     pthread_exit(NULL); // Return NULL to indicate thread completion
 }
 
-
 /**
- * @brief Initialize the SPI device and wiringPi library
+ * @brief Initialize the SPI devices and thread configs
  * @param port Port number for UDP server
  * @return uint8_t 0 on success, 1 on failure
  */
 int init(char *port){
 
-    memset(cmd_data.bytes, 0, SPI_BUF_SIZE); // clear the SPI buffer
-
+    // initialize the thread configurations
+    for(int i=0; i< NUM_THREADS; i++){
+        thread_cfgs[i].thread_id = i;
+        thread_cfgs[i].spi_channel = SPI_CHAN;
+        thread_cfgs[i].data_ready = FALSE;
+        switch(i){
+            case 0:
+                thread_cfgs[i].spi_dev = SPI_DEV0;
+                break;
+            case 1:
+                thread_cfgs[i].spi_dev = SPI_DEV1;
+                break;
+            case 2:
+                thread_cfgs[i].spi_dev = SPI_DEV3; // we can't access SPI2 on the pi!
+                break;
+            case 3:
+                thread_cfgs[i].spi_dev = SPI_DEV4;
+                break;
+            case 4:
+                thread_cfgs[i].spi_dev = SPI_DEV5;
+                break;
+            default:
+                thread_cfgs[i].spi_dev = SPI_DEV0;
+                break;
+        }
+    }
     // Initialize the wiringPi library
     if (wiringPiSetup() == -1) {
         fprintf(stderr, "Failed to initialize wiringPi: %s\n", strerror(errno));
         return 1;
     }
 
-    // Initialize the SPI bus
-    if ((spi_fd = wiringPiSPIxSetupMode (SPI_DEV, SPI_CHAN, SPEED*MHZ,SPI_MODE_0)) < 0){
-        fprintf (stderr, "Failed to open the SPI bus: %s\n", strerror (errno)) ;
-        return 1;
+    // Initialize the SPI buses
+    for(int i=0; i< NUM_THREADS; i++){
+        if ((spi_fd = wiringPiSPIxSetupMode (thread_cfgs[i].spi_dev, thread_cfgs[i].spi_channel, SPEED*MHZ,SPI_MODE_0)) < 0){
+            fprintf (stderr, "Failed to open the SPI bus: %s\n", strerror (errno)) ;
+            return 1;
+        }
     }
     // Initialize the UDP server
     udp_fd = init_UDP(port);
@@ -279,15 +318,14 @@ int init(char *port){
  * @brief Compute and append the crc value to the command data
  * @return uint16_t crc value
  */
-uint16_t append_crc(void){
+uint16_t append_crc(union CMD_DATA * data ){
     uint8_t i = {0}; // loop index
     crc = init_val; // set crc to the initial value
-    // compute crc and append to cmd_data.values
+    // compute crc and append to data->values
     for(i=0;i<(SPI_BUF_SIZE/2 -1);i++){
-        crc = calc_crc16(crc, cmd_data.values[i],poly16);
+        crc = calc_crc16(crc, data->values[i],poly16);
     }
-    cmd_data.values[i]=crc; // append the crc value to the command data
-
+    data->values[i]=crc; // append the crc value to the command data
     return crc;
 }
 
@@ -295,33 +333,16 @@ uint16_t append_crc(void){
  * @brief verify the crc value
  * @return uint16_t crc value (0 indicates success)
  */
-uint16_t verify_crc(void){
+uint16_t verify_crc(union CMD_DATA * data){
     uint8_t i = {0}; // loop index
     crc = init_val; // set the initial value to crc
     // verify crc calculation
     for(i=0;i<(SPI_BUF_SIZE/2);i++){
-        crc = calc_crc16(crc, cmd_data.values[i],poly16);
+        crc = calc_crc16(crc, data->values[i],poly16);
     }
     return crc;
 }
 
-/**
- * @brief Send the command data over SPI
- * @return 0 on success
- */
-int send_SPI(void){
-
-    pthread_mutex_lock(&mutex); // lock the data
-    memcpy(TXRX_buffer, cmd_data.bytes, SPI_BUF_SIZE); // < 200 nsec latency
-    pthread_mutex_unlock(&mutex); // unlock the data
-
-    // write data over SPI, note that TXRX buffer will be overwritten with received data
-    if (wiringPiSPIxDataRW (SPI_DEV,SPI_CHAN, TXRX_buffer, sizeof(TXRX_buffer)) == -1){
-        syslog(LOG_ERR, "SPI failure: %s", strerror (errno)) ;
-        return -1;
-    } 
-    return 0;
-}
 
 /********************** main ******************************/
 
@@ -330,16 +351,22 @@ int main (int argc, char *argv[])
     // Lock the memory
     mlockall(MCL_CURRENT | MCL_FUTURE);
 
-    // Initialize the condition variable
-    pthread_cond_init(&cond_var, NULL);
-    // Init mutex with priority inheritance
+
+    // Set mutex to priority inheritance
     pthread_mutexattr_init(&mattr);
     pthread_mutexattr_setprotocol(&mattr, PTHREAD_PRIO_INHERIT);
-    pthread_mutex_init(&mutex, &mattr);
+    // Initialize the condition variables and mutexes
+    for(int i=0;i<NUM_THREADS;i++){
+        // cond_var[i] = PTHREAD_COND_INITIALIZER;
+        pthread_cond_init(&cond_var[i], NULL);
+        pthread_mutex_init(&mutex[i], &mattr);
+    }
+
+
 
     char* port = NULL; // port number
     pthread_t udp_thread; // thread for UDP server
-    pthread_t spi_thread; // thread for SPI communication
+    pthread_t spi_thread[NUM_THREADS]; // thread for SPI communication
 
     // check command line argument
     if (argc != 2) {
@@ -393,20 +420,24 @@ int main (int argc, char *argv[])
         syslog(LOG_ERR, "pthread_attr_setinheritsched error: %d, meaning: %s\n", ret, strerror(ret));
         return 1;
     }
-    syslog(LOG_INFO, "Starting knode on port %s.\n",port);
-    pthread_create(&udp_thread, &attr, recv_UDP, NULL); // create the UDP thread
-    pthread_create(&spi_thread,&attr, send_SPI_thread, NULL); // create the SPI thread
 
-    // while(main_run == TRUE){
-    //     if(cmd_data_avail == TRUE){
-    //         send_SPI(); // send command over SPI to KASM PCB
-    //         cmd_data_avail = FALSE;
-    //         elapsed_time_nsec = stop_timer();
-    //         syslog(LOG_INFO, "Elapsed loop time %ld", elapsed_time_nsec);
-    //     }
-    // }
+    syslog(LOG_INFO, "Starting knode\n");
+    if(REALTIME==TRUE){
+        pthread_create(&udp_thread, &attr, recv_UDP, NULL); // create the UDP thread
+        for(int i=0;i<NUM_THREADS;i++){
+            pthread_create(&spi_thread[i],&attr, send_SPI_thread, &thread_cfgs[i]); // create the SPI threads
+        }
+    } else {
+        pthread_create(&udp_thread, NULL, recv_UDP, NULL); // create the UDP thread
+        for(int i=0;i<NUM_THREADS;i++){
+            pthread_create(&spi_thread[i], NULL, send_SPI_thread, &thread_cfgs[i]); // create the SPI threads
+        }
+    }
+
     pthread_join(udp_thread, NULL);
-    pthread_join(spi_thread, NULL);
+    for(int i=0;i<NUM_THREADS;i++){
+        pthread_join(spi_thread[i], NULL);
+    }
     return 0;
 
 }

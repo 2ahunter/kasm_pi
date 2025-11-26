@@ -14,7 +14,7 @@
 #include <sys/mman.h> // necessary for mlockall
 #include "UDP_client.h"
 
-#define PERIOD_NSEC  (500*1000) // 500 usec interval
+#define PERIOD_NSEC  (1000*1000) // 500 usec interval
 #define NSEC_PER_SEC (1000*1000*1000)
 
 
