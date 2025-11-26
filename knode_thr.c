@@ -38,7 +38,7 @@
 #define	TRUE	(1==1)
 #define	FALSE	(!TRUE)
 #define REALTIME TRUE
-#define NUM_THREADS 2
+#define NUM_THREADS 3
 
 
 #define SPI_DEV0    0   
@@ -204,6 +204,8 @@ void * recv_UDP(void *data){
     struct sockaddr_storage peer_addr;
     union CMD_DATA buf_data;
     struct timespec prd_tmr={0};
+    struct timespec curr_tmr={0};
+    long int delta_time_nsec = {0};
     int timeout_ms = 1000; // 1 second timeout for polling
 
     memset(buf_data.bytes, 0, SPI_BUF_SIZE); // init the UDP buffer
@@ -217,9 +219,11 @@ void * recv_UDP(void *data){
     getinfo();
     while(running == TRUE){
         poll_ret = poll(fds, 1, timeout_ms);
+        clock_gettime(CLOCK_MONOTONIC, &prd_tmr);
         if(poll_ret < 0) exit(EXIT_FAILURE); // error
-        if(poll_ret > 0) {
-            clock_gettime(CLOCK_MONOTONIC, &prd_tmr);
+        if(poll_ret == 0) {
+            syslog(LOG_WARNING, "UDP poll timeout after %d ms", timeout_ms);
+        } else {
             // Receive data from the UDP socket
             nread = recvfrom(udp_fd, buf_data.bytes, CMD_SIZE, 0,
                             (struct sockaddr *)&peer_addr, &peer_addrlen);
@@ -236,24 +240,35 @@ void * recv_UDP(void *data){
                         cmd_data[thr].values[i] = ntohs(buf_data.values[i]);
                         syslog(LOG_DEBUG, "Received value %zu: %d\n", i, buf_data.values[i]);
                     }
-                crc = append_crc(&cmd_data[thr]); // compute the crc and append to the command data
-                }
-
-                for(int thr=0;thr<NUM_THREADS;thr++){
+                    crc = append_crc(&cmd_data[thr]); // compute the crc and append to the command data
                     thread_cfgs[thr].data_ready = TRUE; // set the data ready flag
                     pthread_cond_signal(&cond_var[thr]); // signal SPI thread that new data is available
                     pthread_mutex_unlock(&mutex[thr]); // unlock the mutex
                 }
-
-                // Calculate next wake-up time
-                prd_tmr.tv_nsec += PERIOD_NSEC;
-                normalize_timespec(&prd_tmr);
-                clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &prd_tmr, NULL);
             }
             else {
                 syslog(LOG_ERR, "Received %zd bytes, expected %d bytes", nread, CMD_SIZE);
             }
         }
+        // Calculate next wake-up time
+        prd_tmr.tv_nsec += PERIOD_NSEC;
+        normalize_timespec(&prd_tmr);
+        // Get the current time for logging
+        clock_gettime(CLOCK_MONOTONIC, &curr_tmr);
+        // Compute the difference between current time and next period time
+        delta_time_nsec = (prd_tmr.tv_sec - curr_tmr.tv_sec) * NSEC_PER_SEC +
+                            (prd_tmr.tv_nsec - curr_tmr.tv_nsec);
+        if (delta_time_nsec < 0) {
+            syslog(LOG_ERR, "Missed deadline by %ld ns", -delta_time_nsec);
+            // If we missed the deadline 
+            // set period timer to current time plus one period
+            prd_tmr.tv_sec = curr_tmr.tv_sec;
+            prd_tmr.tv_nsec = curr_tmr.tv_nsec;
+            prd_tmr.tv_nsec += PERIOD_NSEC;
+            normalize_timespec(&prd_tmr);
+        }
+        syslog(LOG_DEBUG, "Sleep until: %ld.%09ld", prd_tmr.tv_sec, prd_tmr.tv_nsec);
+        clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &prd_tmr, NULL);
     }
     pthread_exit(NULL); // Return NULL to indicate thread completion
 }
@@ -385,6 +400,7 @@ int main (int argc, char *argv[])
 
     openlog(NULL, LOG_PID, LOG_LOCAL6); // Open syslog for logging
     int mask = LOG_MASK(LOG_INFO) | LOG_MASK(LOG_ERR) | LOG_MASK(LOG_NOTICE);
+    // int mask = LOG_MASK(LOG_ERR);
 
     setlogmask(mask);
 

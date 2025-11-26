@@ -16,6 +16,9 @@
 
 #define PERIOD_NSEC  (1000*1000) // 500 usec interval
 #define NSEC_PER_SEC (1000*1000*1000)
+#define TRUE (1==1)
+#define FALSE (!TRUE)
+#define REALTIME TRUE
 
 
 static void normalize_timespec(struct timespec *ts) {
@@ -77,7 +80,9 @@ int main (int argc, char *argv[])
     int res = {0}; // return value
 
     // Lock the memory
-    res = mlockall(MCL_CURRENT|MCL_FUTURE);
+    if (REALTIME==TRUE) {
+        res = mlockall(MCL_CURRENT|MCL_FUTURE);
+    }
 
     // check command line arguments
     // if (argc != 3) {
@@ -117,7 +122,7 @@ int main (int argc, char *argv[])
 
     // Set the scheduler priority
     struct sched_param param;
-    param.sched_priority = 80;
+    param.sched_priority = 81;
     ret = pthread_attr_setschedparam(&attr, &param);
     if (ret != 0){
         fprintf(stderr, "Failed to set scheduler parameters,\n");
@@ -136,7 +141,11 @@ int main (int argc, char *argv[])
 
     // Finally, create RTC simulation thread
     pthread_t rtc_thread;
-    ret = pthread_create(&rtc_thread, &attr, rtc_sim_thread, NULL);
+    if (REALTIME == TRUE){
+        ret = pthread_create(&rtc_thread, &attr, rtc_sim_thread, NULL);
+    } else {
+        ret = pthread_create(&rtc_thread, NULL, rtc_sim_thread, NULL);
+    }
     if (ret != 0){
         fprintf(stderr, "Failed to create thread due to error: %d, meaning: %s\n", ret, strerror(ret));
         return 1;
