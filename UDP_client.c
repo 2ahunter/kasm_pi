@@ -6,6 +6,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 #include <arpa/inet.h>
+#include <time.h>
 #include "UDP_client.h"
 
 int UDP_fd=0;
@@ -96,16 +97,23 @@ int main(int argc, char *argv[])
     int fd; // socket file descriptor returned by UDP_init()
     union CMD_DATA cmd_data, buf_data;
     ssize_t bytes_sent;
+    uint32_t num_samples={1};
     char *ip_addr;
     char *port;
+    struct timespec end, start;
 
     if (argc < 3) {
-        fprintf(stderr, "Usage: %s host port\n", argv[0]);
+        fprintf(stderr, "Usage: %s host port <samples>\n", argv[0]);
         exit(EXIT_FAILURE);
     }
 
-    ip_addr = argv[1];
-    port = argv[2];
+    ip_addr = argv[1]; // get IP address from command line argument
+    port = argv[2]; // get port number from command line argument
+
+    if(argc >3){
+	    num_samples = argv[3]; //optional number of samples to send
+    }
+
     fd = UDP_init(ip_addr, port);
 
     if(fd<0){
@@ -113,22 +121,30 @@ int main(int argc, char *argv[])
         exit(EXIT_FAILURE);
     }
 
-    // populate the buffer with random values
-    for(int i = 0; i < CMD_SIZE/2; i++){
-        int16_t value = (rand() % 0xFFFF)>>8; // generate small random values
-        cmd_data.values[i] = value;
-        buf_data.values[i] = htons(value);
+    for(int ns = 0; ns < num_samples; ns++){
+        start = clock_gettime(CLOCK_MONOTONIC, &start);
+       
+        // populate the buffer with random values
+        for(int i = 0; i < CMD_SIZE/2; i++){
+            int16_t value = (rand() % 0xFFFF)>>8; // generate small random values
+            cmd_data.values[i] = value;
+            buf_data.values[i] = htons(value);
+        }
+
+        /* print the values*/
+        // for(int i = 0; i < CMD_SIZE/2; i++){
+        //     printf("Value %d: %d\n", i, cmd_data.values[i]);
+        // }
+
+        /* send command buffer values */
+        bytes_sent = UDP_send(buf_data);
+
+        if(bytes_sent < 0){
+            fprintf(stderr, "Failed to send data: %s\n", gai_strerror(bytes_sent));
+        }
+
+        while (clock_gettime(CLOCK_MONOTONIC, &end) - start < 1000000); // wait for 1ms before sending next sample
     }
-
-    /* print the values*/
-    for(int i = 0; i < CMD_SIZE/2; i++){
-        printf("Value %d: %d\n", i, cmd_data.values[i]);
-    }
-
-    /* send command buffer values */
-    bytes_sent = UDP_send(buf_data);
-
-    printf("Sent %zu bytes\n", bytes_sent);
     exit(EXIT_SUCCESS);
 }
 #endif

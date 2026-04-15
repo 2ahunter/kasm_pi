@@ -1,9 +1,11 @@
-objects = knode.o crc_check.o timers.o
+objects = UDP_client.o UDP_client_test.o
 
 CFLAGS = -Wall -Wextra -pedantic -std=gnu17
 
-LDLIBS = -lwiringPi
+UDP_test: $(objects)
+	cc -o $@ $^ 
 
+UDP_client_test.o: UDP_client_test.c UDP_client.h
 
 knode: $(objects)
 	cc -o $@ $^ $(LDLIBS)
@@ -26,5 +28,5 @@ UDP_client.o: UDP_client.c UDP_client.h
 
 .PHONY : clean
 clean :
-	rm knode $(objects)
+	rm UDP_client $(objects)
 
