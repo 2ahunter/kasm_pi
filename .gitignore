@@ -42,6 +42,9 @@
 *.idb
 *.pdb
 
+# Testing directory
+testing/
+
 # Kernel Module Compile Results
 *.mod*
 *.cmd
