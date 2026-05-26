@@ -26,8 +26,8 @@
 /********** Module level variables ***************************/
 extern int UDP_fd; // file descriptor for the UDP socket, set by UDP_init()
 uint8_t running = TRUE; // set flag to false to terminate the threads and exit the program
-// char ip_addr[80] = "128.114.22.117";
-char ip_addr[80] = "127.0.0.0";
+char ip_addr[80] = "128.114.22.117";
+// char ip_addr[80] = "127.0.0.0";
 
 char port[20] = "5001";
 int num_cmds = 1; // number of commands to send, default is 1
