@@ -4,6 +4,7 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/types.h>
+#include <netdb.h>
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <time.h>
@@ -84,6 +85,16 @@ int UDP_send(union CMD_DATA data){
 
     sent = send(UDP_fd, data.bytes, len, 0);
     if (sent != len) {
+        fprintf(stderr, "partial/failed write\n");
+    }
+    return(sent);
+}
+
+int UDP_send_protocol(uint8_t * data, size_t data_len){
+    ssize_t sent = 0;
+
+    sent = send(UDP_fd, data, data_len, 0);
+    if (sent != data_len) {
         fprintf(stderr, "partial/failed write\n");
     }
     return(sent);

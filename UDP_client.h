@@ -26,3 +26,5 @@ union CMD_DATA {
 int UDP_init(char *ip, char *port);
 
 int UDP_send(union CMD_DATA data);
+
+int UDP_send_protocol(uint8_t * data, size_t data_len);

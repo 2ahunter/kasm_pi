@@ -1,4 +1,5 @@
-objects = UDP_client.o UDP_client_test.o
+objects = UDP_client.o UDP_DAC_test.o
+# objects = UDP_client.o UDP_client_test.o
 
 CFLAGS = -Wall -Wextra -pedantic -std=gnu17
 
@@ -6,6 +7,8 @@ UDP_test: $(objects)
 	cc -o $@ $^ 
 
 UDP_client_test.o: UDP_client_test.c UDP_client.h
+
+UDP_DAC_test.o: UDP_DAC_test.c UDP_client.h
 
 knode: $(objects)
 	cc -o $@ $^ $(LDLIBS)
