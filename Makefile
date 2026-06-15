@@ -1,5 +1,5 @@
-objects = UDP_client.o UDP_DAC_test.o
-# objects = UDP_client.o UDP_client_test.o
+# objects = UDP_client.o UDP_DAC_test.o
+ objects = UDP_client.o UDP_client_test.o
 
 CFLAGS = -Wall -Wextra -pedantic -std=gnu17
 
